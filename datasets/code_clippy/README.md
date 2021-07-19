@@ -161,7 +161,7 @@ The programming languages most represented in this dataset are those of Java and
 
 ### Dataset Curators
 
-Nathan Coooper, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and more coming soon!
+Nathan Coooper, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors!
 
 ### Licensing Information
 
@@ -169,7 +169,17 @@ This repository is under the GPL-3.0 license.
 
 ### Citation Information
 
-[More Information Needed]
+```
+@misc{cooper-2021-code-clippy-data,
+    author       = {Nathan Cooper, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors},
+    title        = {{Code Clippy Data: A large dataset of code data from Github for research into code language models}},
+    month        = jul,
+    year         = 2021,
+    version      = {1.0},
+    publisher    = {GitHub},
+    url          = {https://github.com/ncoop57/gpt-code-clippy}
+}
+``  
 
 ### Contributions
 
