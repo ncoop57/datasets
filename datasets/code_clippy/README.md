@@ -161,7 +161,7 @@ The programming languages most represented in this dataset are those of Java and
 
 ### Dataset Curators
 
-Nathan Coooper, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors!
+Nathan Coooper, Artashes Arutiunian, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors!
 
 ### Licensing Information
 
@@ -183,4 +183,4 @@ This repository is under the GPL-3.0 license.
 
 ### Contributions
 
-Thanks to [@ncoop57](https://github.com/ncoop57), [@arampacha](https://github.com/arampacha), [@shpotes](https://github.com/shpotes), [@arunraja-hub](https://github.com/arunraja-hub), [@taisazero](https://github.com/taisazero), [@Mrinal18](https://github.com/Mrinal18), and [more to come] for adding this dataset.
+Thanks to [@ncoop57](https://github.com/ncoop57), [@arampacha](https://github.com/arampacha), [@shpotes](https://github.com/shpotes), [@arunraja-hub](https://github.com/arunraja-hub), [@taisazero](https://github.com/taisazero), [@Mrinal18](https://github.com/Mrinal18), and contributors for adding this dataset.
