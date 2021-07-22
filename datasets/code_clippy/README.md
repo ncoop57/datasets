@@ -168,7 +168,7 @@ This repository is under the GPL-3.0 license.
 
 ```
 @misc{cooper-2021-code-clippy-data,
-    author       = {Nathan Cooper, Santiago Hincapié-Potes, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors},
+    author       = {Nathan Coooper, Artashes Arutiunian, Santiago Hincapié-Potes, Ben Trevett, Arun Raja, Erfan Hossami, Mrinal Mathur, and contributors},
     title        = {{Code Clippy Data: A large dataset of code data from Github for research into code language models}},
     month        = jul,
     year         = 2021,
