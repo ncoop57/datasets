@@ -21,7 +21,7 @@ task_ids:
 - language-modeling
 ---
 
-# Dataset Card for [Dataset Name]
+# Dataset Card for Code Clippy Data
 
 ## Table of Contents
 - [Table of Contents](#table-of-contents)
