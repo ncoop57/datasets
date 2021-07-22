@@ -179,7 +179,7 @@ This repository is under the GPL-3.0 license.
     publisher    = {GitHub},
     url          = {https://github.com/ncoop57/gpt-code-clippy}
 }
-``  
+```
 
 ### Contributions
 
