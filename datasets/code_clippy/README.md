@@ -148,7 +148,7 @@ The paper ["Evaluating Large Language Models Trained on Code"](https://arxiv.org
 
 ### Discussion of Biases
 
-The programming languages most represented in this dataset are those of Java and Python. Therefore, other, still popular languages such as C and C++, are less represented and therefore model performance for these languages will be less comparatively. Additionally, this dataset only contains public repositories and so may not be representative of code written by private developers. No filtering was performed for potential racist, offensive, or otherwise inappropriate content. Therefore there may be such content in the dataset that will be reflected in models trained on it.
+The programming languages most represented in this dataset are those of Javascript and Python. Therefore, other, still popular languages such as C and C++, are less represented and therefore model performance for these languages will be less comparatively. Additionally, this dataset only contains public repositories and so may not be representative of code written by private developers. No filtering was performed for potential racist, offensive, or otherwise inappropriate content. Therefore there may be such content in the dataset that will be reflected in models trained on it.
 
 ### Other Known Limitations
 
