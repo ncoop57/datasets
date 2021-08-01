@@ -103,7 +103,7 @@ Multiple programming languages are included in the dataset.
 | Size in GBs | Tain   | Valid | Test |
 | -----       | ------ | ----- | ---- |
 | Duplicate   | 194    | 9     | 6.3  |
-| Deuplicate  | 126    | 3.3   | 3.1  |
+| Deduplicate | 126    | 3.3   | 3.1  |
 
 ## Dataset Creation
 
@@ -161,7 +161,7 @@ The programming languages most represented in this dataset are those of Java and
 
 ### Dataset Curators
 
-Nathan Coooper and more coming soon!
+Nathan Coooper and Erfan Hossami and Arun Raja and more coming soon!
 
 ### Licensing Information
 
