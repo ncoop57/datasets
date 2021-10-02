@@ -1,14 +1,14 @@
 # coding=utf-8
-
+import io
 import json
 from dataclasses import dataclass
-from io import BytesIO
 from typing import Optional
 
 import pyarrow as pa
 import pyarrow.json as paj
 
 import datasets
+from datasets.utils.file_utils import readline
 
 
 logger = datasets.utils.logging.get_logger(__name__)
@@ -100,14 +100,40 @@ class Json(datasets.ArrowBasedBuilder):
             else:
                 with open(file, "rb") as f:
                     batch_idx = 0
+                    # Use block_size equal to the chunk size divided by 32 to leverage multithreading
+                    # Set a default minimum value of 16kB if the chunk size is really small
+                    block_size = max(self.config.chunksize // 32, 16 << 10)
                     while True:
                         batch = f.read(self.config.chunksize)
                         if not batch:
                             break
-                        batch += f.readline()  # finish current line
+                        # Finish current line
                         try:
-                            pa_table = paj.read_json(BytesIO(batch))
-                        except json.JSONDecodeError as e:
+                            batch += f.readline()
+                        except (AttributeError, io.UnsupportedOperation):
+                            batch += readline(f)
+                        try:
+                            while True:
+                                try:
+                                    pa_table = paj.read_json(
+                                        io.BytesIO(batch), read_options=paj.ReadOptions(block_size=block_size)
+                                    )
+                                    break
+                                except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as e:
+                                    if (
+                                        isinstance(e, pa.ArrowInvalid)
+                                        and "straddling" not in str(e)
+                                        or block_size > len(batch)
+                                    ):
+                                        raise
+                                    else:
+                                        # Increase the block size in case it was too small.
+                                        # The block size will be reset for the next file.
+                                        logger.debug(
+                                            f"Batch of {len(batch)} bytes couldn't be parsed with block_size={block_size}. Retrying with block_size={block_size * 2}."
+                                        )
+                                        block_size *= 2
+                        except pa.ArrowInvalid as e:
                             logger.error(f"Failed to read file '{file}' with error {type(e)}: {e}")
                             try:
                                 with open(file, encoding="utf-8") as f:
@@ -119,7 +145,7 @@ class Json(datasets.ArrowBasedBuilder):
                                 f"You should probably indicate the field of the JSON file containing your records. "
                                 f"This JSON file contain the following fields: {str(list(dataset.keys()))}. "
                                 f"Select the correct one and provide it as `field='XXX'` to the dataset loading method. "
-                            )
+                            ) from None
                         # Uncomment for debugging (will print the Arrow table size and elements)
                         # logger.warning(f"pa_table: {pa_table} num rows: {pa_table.num_rows}")
                         # logger.warning('\n'.join(str(pa_table.slice(i, 1).to_pydict()) for i in range(pa_table.num_rows)))

@@ -5,6 +5,7 @@ Copyright by the AllenNLP authors.
 """
 
 import copy
+import io
 import json
 import os
 import re
@@ -13,28 +14,32 @@ import sys
 import tempfile
 import time
 import urllib
+import warnings
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from hashlib import sha256
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
 import numpy as np
 import posixpath
 import requests
-from tqdm.auto import tqdm
+from tqdm.contrib.concurrent import thread_map
 
-from .. import __version__, config
+from .. import __version__, config, utils
 from . import logging
 from .extract import ExtractManager
 from .filelock import FileLock
+from .tqdm_utils import tqdm
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 INCOMPLETE_SUFFIX = ".incomplete"
+
+T = TypeVar("T", str, Path)
 
 
 def init_hf_modules(hf_modules_cache: Optional[Union[Path, str]] = None) -> str:
@@ -126,6 +131,12 @@ def is_relative_path(url_or_filename: str) -> bool:
     return urlparse(url_or_filename).scheme == "" and not os.path.isabs(url_or_filename)
 
 
+def relative_to_absolute_path(path: T) -> T:
+    """Convert relative path to absolute path."""
+    abs_path_str = os.path.abspath(os.path.expanduser(os.path.expandvars(str(path))))
+    return Path(abs_path_str) if isinstance(path, Path) else abs_path_str
+
+
 def hf_bucket_url(identifier: str, filename: str, use_cdn=False, dataset=True) -> str:
     if dataset:
         endpoint = config.CLOUDFRONT_DATASETS_DISTRIB_PREFIX if use_cdn else config.S3_DATASETS_BUCKET_PREFIX
@@ -137,33 +148,40 @@ def hf_bucket_url(identifier: str, filename: str, use_cdn=False, dataset=True) -
 def head_hf_s3(
     identifier: str, filename: str, use_cdn=False, dataset=True, max_retries=0
 ) -> Union[requests.Response, Exception]:
-    try:
-        return http_head(
-            hf_bucket_url(identifier=identifier, filename=filename, use_cdn=use_cdn, dataset=dataset),
-            max_retries=max_retries,
-        )
-    except Exception as e:
-        return e
+    return http_head(
+        hf_bucket_url(identifier=identifier, filename=filename, use_cdn=use_cdn, dataset=dataset),
+        max_retries=max_retries,
+    )
 
 
-def hf_github_url(path: str, name: str, dataset=True, version: Optional[str] = None) -> str:
+def hf_github_url(path: str, name: str, dataset=True, revision: Optional[str] = None, version="deprecated") -> str:
     from .. import SCRIPTS_VERSION
 
-    version = version or os.getenv("HF_SCRIPTS_VERSION", SCRIPTS_VERSION)
+    if version != "deprecated":
+        warnings.warn(
+            "'version' was renamed to 'revision' in version 1.13 and will be removed in 1.15.", FutureWarning
+        )
+        revision = version
+    revision = revision or os.getenv("HF_SCRIPTS_VERSION", SCRIPTS_VERSION)
     if dataset:
-        return config.REPO_DATASETS_URL.format(version=version, path=path, name=name)
+        return config.REPO_DATASETS_URL.format(revision=revision, path=path, name=name)
     else:
-        return config.REPO_METRICS_URL.format(version=version, path=path, name=name)
+        return config.REPO_METRICS_URL.format(revision=revision, path=path, name=name)
 
 
-def hf_hub_url(path: str, name: str, version: Optional[str] = None) -> str:
-    version = version or config.HUB_DEFAULT_VERSION
-    return config.HUB_DATASETS_URL.format(path=path, name=name, version=version)
+def hf_hub_url(path: str, name: str, revision: Optional[str] = None, version="deprecated") -> str:
+    if version != "deprecated":
+        warnings.warn(
+            "'version' was renamed to 'revision' in version 1.13 and will be removed in 1.15.", FutureWarning
+        )
+        revision = version
+    revision = revision or config.HUB_DEFAULT_VERSION
+    return config.HUB_DATASETS_URL.format(path=path, name=name, revision=revision)
 
 
 def url_or_path_join(base_name: str, *pathnames: str) -> str:
     if is_remote_url(base_name):
-        return posixpath.join(base_name, *pathnames)
+        return posixpath.join(base_name, *(str(pathname).replace(os.sep, "/").lstrip("/") for pathname in pathnames))
     else:
         return Path(base_name, *pathnames).as_posix()
 
@@ -384,7 +402,7 @@ def _request_with_retry(
         try:
             response = requests.request(method=method.upper(), url=url, timeout=timeout, **params)
             success = True
-        except requests.exceptions.ConnectTimeout as err:
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as err:
             if tries > max_retries:
                 raise err
             else:
@@ -411,10 +429,10 @@ def ftp_get(url, temp_file, timeout=10.0):
         with closing(urllib.request.urlopen(url, timeout=timeout)) as r:
             shutil.copyfileobj(r, temp_file)
     except urllib.error.URLError as e:
-        raise ConnectionError(e)
+        raise ConnectionError(e) from None
 
 
-def http_get(url, temp_file, proxies=None, resume_size=0, headers=None, cookies=None, timeout=10.0, max_retries=0):
+def http_get(url, temp_file, proxies=None, resume_size=0, headers=None, cookies=None, timeout=100.0, max_retries=0):
     headers = copy.deepcopy(headers) or {}
     headers["user-agent"] = get_datasets_user_agent(user_agent=headers.get("user-agent"))
     if resume_size > 0:
@@ -433,7 +451,7 @@ def http_get(url, temp_file, proxies=None, resume_size=0, headers=None, cookies=
         return
     content_length = response.headers.get("Content-Length")
     total = resume_size + int(content_length) if content_length is not None else None
-    progress = tqdm(
+    progress = utils.tqdm(
         unit="B",
         unit_scale=True,
         total=total,
@@ -466,11 +484,30 @@ def http_head(
     return response
 
 
-def request_etag(url: str, use_auth_token: Optional[Union[str, bool]] = None):
+def request_etag(url: str, use_auth_token: Optional[Union[str, bool]] = None) -> Optional[str]:
     headers = get_authentication_headers_for_url(url, use_auth_token=use_auth_token)
-    response = http_head(url, headers=headers)
+    response = http_head(url, headers=headers, max_retries=3)
+    response.raise_for_status()
     etag = response.headers.get("ETag") if response.ok else None
     return etag
+
+
+def request_etags(
+    urls: List[str],
+    use_auth_token: Optional[Union[str, bool]] = None,
+    max_workers=64,
+    tqdm_kwargs: Optional[dict] = None,
+) -> List[Optional[str]]:
+    tqdm_kwargs = tqdm_kwargs if tqdm_kwargs is not None else {}
+    tqdm_kwargs["desc"] = tqdm_kwargs.get("desc", "Get ETags")
+    tqdm_kwargs["disable"] = tqdm_kwargs.get("disable", len(urls) <= 16 or logging.get_verbosity() == logging.NOTSET)
+    return thread_map(
+        partial(request_etag, use_auth_token=use_auth_token),
+        urls,
+        max_workers=max_workers,
+        tqdm_class=tqdm,
+        **tqdm_kwargs,
+    )
 
 
 def get_from_cache(
@@ -654,3 +691,16 @@ def add_end_docstrings(*docstr):
 
 def estimate_dataset_size(paths):
     return sum(path.stat().st_size for path in paths)
+
+
+def readline(f: io.RawIOBase):
+    # From: https://github.com/python/cpython/blob/d27e2f4d118e7a9909b6a3e5da06c5ff95806a85/Lib/_pyio.py#L525
+    res = bytearray()
+    while True:
+        b = f.read(1)
+        if not b:
+            break
+        res += b
+        if res.endswith(b"\n"):
+            break
+    return bytes(res)

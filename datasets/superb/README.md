@@ -15,6 +15,8 @@ size_categories:
 source_datasets:
 - original
 - extended|librispeech_asr
+- extended|other-librimix
+- extended|other-speech_commands
 task_categories:
 - speech-processing
 task_ids:
@@ -85,6 +87,37 @@ Automatic Speech Recognition (ASR) transcribes utterances into words. While PR a
 
 Keyword Spotting (KS) detects preregistered keywords by classifying utterances into a predefined set of words. The task is usually performed on-device for the fast response time. Thus, accuracy, model size, and inference time are all crucial. SUPERB uses the widely used [Speech Commands dataset v1.0](https://www.tensorflow.org/datasets/catalog/speech_commands) for the task. The dataset consists of ten classes of keywords, a class for silence, and an unknown class to include the false positive. The evaluation metric is accuracy (ACC)
 
+##### Example of usage:
+
+Use these auxillary functions to:
+- load the audio file into an audio data array
+- sample from long `_silence_` audio clips
+
+For other examples of handling long `_silence_` clips see the [S3PRL](https://github.com/s3prl/s3prl/blob/099ce807a6ffa6bf2482ceecfcaf83dea23da355/s3prl/downstream/speech_commands/dataset.py#L80) 
+or [TFDS](https://github.com/tensorflow/datasets/blob/6b8cfdb7c3c0a04e731caaa8660ce948d0a67b1e/tensorflow_datasets/audio/speech_commands.py#L143) implementations.
+
+```python
+def map_to_array(example):
+    import soundfile as sf
+
+    speech_array, sample_rate = sf.read(example["file"])
+    example["speech"] = speech_array
+    example["sample_rate"] = sample_rate
+    return example
+
+
+def sample_noise(example):
+    # Use this function to extract random 1 sec slices of each _silence_ utterance,
+    # e.g. inside `torch.utils.data.Dataset.__getitem__()`
+    from random import randint
+
+    if example["label"] == "_silence_":
+        random_offset = randint(0, len(example["speech"]) - example["sample_rate"] - 1)
+        example["speech"] = example["speech"][random_offset : random_offset + example["sample_rate"]]
+
+    return example
+```
+
 #### qbe
 
 Query by Example Spoken Term Detection (QbE) detects a spoken term (query) in an audio database (documents) by binary discriminating a given pair of query and document into a match or not. The English subset in [QUESST 2014 challenge](https://github.com/s3prl/s3prl/tree/master/downstream#qbe-query-by-example-spoken-term-detection) is adopted since we focus on investigating English as the first step. The evaluation metric is maximum term weighted value (MTWV) which balances misses and false alarms.
@@ -106,7 +139,46 @@ Automatic Speaker Verification (ASV) verifies whether the speakers of a pair of 
 
 #### sd
 
-Speaker Diarization (SD) predicts who is speaking when for each timestamp, and multiple speakers can speak simultaneously. The model has to encode rich speaker characteristics for each frame and should be able to represent mixtures of signals. [LibriMix](https://github.com/s3prl/s3prl/tree/master/downstream#sd-speaker-diarization) is adopted where LibriSpeech train-clean-100/dev-clean/test-clean are used to generate mixtures for training/validation/testing. We focus on the two-speaker scenario as the first step. The time-coded speaker labels were generated using alignments from Kaldi LibriSpeech ASR model. The evaluation metric is diarization error rate (DER).
+Speaker Diarization (SD) predicts *who is speaking when* for each timestamp, and multiple speakers can speak simultaneously. The model has to encode rich speaker characteristics for each frame and should be able to represent mixtures of signals. [LibriMix](https://github.com/s3prl/s3prl/tree/master/downstream#sd-speaker-diarization) is adopted where LibriSpeech train-clean-100/dev-clean/test-clean are used to generate mixtures for training/validation/testing. We focus on the two-speaker scenario as the first step. The time-coded speaker labels were generated using alignments from Kaldi LibriSpeech ASR model. The evaluation metric is diarization error rate (DER).
+
+##### Example of usage
+
+Use these auxiliary functions to:
+- load the audio file into an audio data array
+- generate the label array
+
+```python
+def load_audio_file(example, frame_shift=160):
+    import soundfile as sf
+
+    example["array"], example["sample_rate"] = sf.read(
+        example["file"], start=example["start"] * frame_shift, stop=example["end"] * frame_shift
+    )
+    return example
+
+
+def generate_label(example, frame_shift=160, num_speakers=2, rate=16000):
+    import numpy as np
+
+    start = example["start"]
+    end = example["end"]
+    frame_num = end - start
+    speakers = sorted({speaker["speaker_id"] for speaker in example["speakers"]})
+    label = np.zeros((frame_num, num_speakers), dtype=np.int32)
+    for speaker in example["speakers"]:
+        speaker_index = speakers.index(speaker["speaker_id"])
+        start_frame = np.rint(speaker["start"] * rate / frame_shift).astype(int)
+        end_frame = np.rint(speaker["end"] * rate / frame_shift).astype(int)
+        rel_start = rel_end = None
+        if start <= start_frame < end:
+            rel_start = start_frame - start
+        if start < end_frame <= end:
+            rel_end = end_frame - start
+        if rel_start is not None or rel_end is not None:
+            label[rel_start:rel_end, speaker_index] = 1
+    example["label"] = label
+    return example
+```
 
 #### er
 
@@ -130,7 +202,7 @@ The language data in SUPERB is in English (BCP-47 `en`)
 
 An example from each split looks like:
 
-```json
+```python
 {'chapter_id': 1240,
  'file': 'path/to/file.flac',
  'id': '103-1240-0000',
@@ -143,8 +215,14 @@ An example from each split looks like:
 
 #### ks
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
+An example from each split looks like:
 
+```python
+{
+  'file': '/path/yes/af7a8296_nohash_1.wav', 
+  'label': 0  # 'yes'
+}
+```
 
 #### qbe
 
@@ -153,8 +231,16 @@ An example from each split looks like:
 
 #### ic
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+```python
+{
+  'file': "/path/wavs/speakers/2BqVo8kVB2Skwgyb/063aa8f0-4479-11e9-a9a5-5dbec3b8816a.wav",
+  'speaker_id': '2BqVo8kVB2Skwgyb',
+  'text': 'Turn the bedroom lights off',
+  'action': 3,  # 'deactivate'
+  'object': 7,  # 'lights'
+  'location': 0  # 'bedroom'
+}
+```
 
 #### sf
 
@@ -163,8 +249,12 @@ An example from each split looks like:
 
 #### si
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+```python
+{
+  'file': '/path/wav/id10003/na8-QEFmj44/00003.wav', 
+  'label': 2  # 'id10003'
+}
+```
 
 #### asv
 
@@ -173,7 +263,19 @@ An example from each split looks like:
 
 #### sd
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
+An example from each split looks like:
+```python
+{
+  'record_id': '1578-6379-0038_6415-111615-0009',
+  'file': 'path/to/file.wav',
+  'start': 0,
+  'end': 1590,
+  'speakers': [
+    {'speaker_id': '1578', 'start': 28, 'end': 657},
+    {'speaker_id': '6415', 'start': 28, 'end': 1576}
+  ]
+}
+```
 
 
 #### er
@@ -194,24 +296,31 @@ An example from each split looks like:
 
 - `file`: a `string` feature.
 - `text`: a `string` feature.
-- `speaker_id`: a `int64` feature
-- `chapter_id`: a `int64` feature
-- `id`: a `string` feature 
+- `speaker_id`: a `int64` feature.
+- `chapter_id`: a `int64` feature.
+- `id`: a `string` feature.
 
 #### ks
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+- `file` (`string`): Path to the WAV audio file.
+- `label` (`ClassLabel`): Label of the spoken command. Possible values:
+    - `0: "yes", 1: "no", 2: "up", 3: "down", 4: "left", 5: "right", 6: "on", 7: "off", 8: "stop", 9: "go", 10: "_silence_", 11: "_unknown_"`
 
 #### qbe
 
 [More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
 
-
 #### ic
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+- `file` (`string`): Path to the WAV audio file.
+- `speaker_id` (`string`): ID of the speaker.
+- `text` (`string`): Transcription of the spoken command.
+- `action` (`ClassLabel`): Label of the command's action. Possible values:
+    - `0: "activate", 1: "bring", 2: "change language", 3: "deactivate", 4: "decrease", 5: "increase"`
+- `object` (`ClassLabel`): Label of the command's object. Possible values:
+    - `0: "Chinese", 1: "English", 2: "German", 3: "Korean", 4: "heat", 5: "juice", 6: "lamp", 7: "lights", 8: "music", 9: "newspaper", 10: "none", 11: "shoes", 12: "socks", 13: "volume"`
+- `location` (`ClassLabel`): Label of the command's location. Possible values:
+    - `0: "bedroom", 1: "kitchen", 2: "none", 3: "washroom"`
 
 #### sf
 
@@ -220,8 +329,9 @@ An example from each split looks like:
 
 #### si
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+- `file` (`string`): Path to the WAV audio file.
+- `label` (`ClassLabel`): Label (ID) of the speaker. Possible values: 
+    - `0: "id10001", 1: "id10002", 2: "id10003", ..., 1250: "id11251"`
 
 #### asv
 
@@ -230,12 +340,21 @@ An example from each split looks like:
 
 #### sd
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+The data fields in all splits are:
+- `record_id` (`string`): ID of the record.
+- `file` (`string`): Path to the WAV audio file.
+- `start` (`integer`): Start frame of the audio.
+- `end` (`integer`): End frame of the audio.
+- `speakers` (`list` of `dict`): List of speakers in the audio. Each item contains the fields:
+  - `speaker_id` (`string`): ID of the speaker.
+  - `start` (`integer`): Frame when the speaker starts speaking.
+  - `end` (`integer`): Frame when the speaker stops speaking.
 
 #### er
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
+- `file` (`string`): Path to the WAV audio file.
+- `label` (`ClassLabel`): Label of the speech emotion. Possible values:
+    - `0: "neu", 1: "hap", 2: "ang", 3: "sad"`
 
 ### Data Splits
 
@@ -252,8 +371,9 @@ An example from each split looks like:
 
 #### ks
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+|    | train | validation | test |
+|----|------:|-----------:|-----:|
+| ks | 51094 |       6798 | 3081 |
 
 #### qbe
 
@@ -262,8 +382,9 @@ An example from each split looks like:
 
 #### ic
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+|    | train | validation | test |
+|----|------:|-----------:|-----:|
+| ic | 23132 |       3118 | 3793 |
 
 #### sf
 
@@ -272,8 +393,9 @@ An example from each split looks like:
 
 #### si
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
-
+|    | train  | validation | test |
+|----|-------:|-----------:|-----:|
+| si | 138361 | 6904       | 8251 |
 
 #### asv
 
@@ -282,12 +404,19 @@ An example from each split looks like:
 
 #### sd
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
+The data is split into "train", "dev" and "test" sets, each containing the following number of examples:
 
+|    | train |  dev | test |
+|----|------:|-----:|-----:|
+| sd | 13901 | 3014 | 3002 |
 
 #### er
 
-[More Information Needed](https://github.com/huggingface/datasets/blob/master/CONTRIBUTING.md#how-to-contribute-to-the-dataset-cards)
+The data is split into 5 sets intended for 5-fold cross-validation:
+
+|    | session1 | session2 | session3 | session4 | session5 |
+|----|---------:|---------:|---------:|---------:|---------:|
+| er | 1085     | 1023     | 1151     | 1031     | 1241     |
 
 ## Dataset Creation
 
@@ -385,4 +514,4 @@ the correct citation for each contained dataset.
 
 ### Contributions
 
-Thanks to [@lewtun](https://github.com/lewtun)  and [@albertvillanova](https://github.com/albertvillanova) for adding this dataset.
+Thanks to [@lewtun](https://github.com/lewtun), [@albertvillanova](https://github.com/albertvillanova) and [@anton-l](https://github.com/anton-l) for adding this dataset.

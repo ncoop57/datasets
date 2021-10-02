@@ -20,6 +20,8 @@ import re
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field, fields
+from functools import reduce
+from operator import mul
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Sequence as Sequence_
 from typing import Tuple, Union
@@ -116,7 +118,7 @@ def string_to_arrow(datasets_dtype: str) -> pa.DataType:
         timestamp[us, tz=America/New_York]
         """
         timestamp_internals = timestamp_matches.group(1)
-        internals_regex = re.compile(r"^(s|ms|us|ns),\s*tz=([a-zA-Z0-9/_+:]*)$")
+        internals_regex = re.compile(r"^(s|ms|us|ns),\s*tz=([a-zA-Z0-9/_+\-:]*)$")
         internals_matches = internals_regex.search(timestamp_internals)
         if timestamp_internals in ["s", "ms", "us", "ns"]:
             return pa.timestamp(timestamp_internals)
@@ -142,9 +144,9 @@ def string_to_arrow(datasets_dtype: str) -> pa.DataType:
     return pa.__dict__[arrow_data_factory_function_name]()
 
 
-def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
+def _cast_to_python_objects(obj: Any, only_1d_for_numpy: bool) -> Tuple[Any, bool]:
     """
-    Cast numpy/pytorch/tensorflow/pandas objects to python lists.
+    Cast pytorch/tensorflow/pandas objects to python numpy array/lists.
     It works recursively.
 
     To avoid iterating over possibly long lists, it first checks if the first element that is not None has to be casted.
@@ -153,6 +155,9 @@ def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
 
     Args:
         obj: the object (nested struct) to cast
+        only_1d_for_numpy (bool): whether to keep the full multi-dim tensors as multi-dim numpy arrays, or convert them to
+            nested lists of 1-dimensional numpy arrays. This can be useful to keep only 1-d arrays to instantiate Arrow arrays.
+            Indeed Arrow only support converting 1-dimensional array values.
 
     Returns:
         casted_obj: the casted object
@@ -169,13 +174,27 @@ def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
         import jax.numpy as jnp
 
     if isinstance(obj, np.ndarray):
-        return obj.tolist(), True
+        if not only_1d_for_numpy or obj.ndim == 1:
+            return obj, False
+        else:
+            return [_cast_to_python_objects(x, only_1d_for_numpy=only_1d_for_numpy)[0] for x in obj], True
     elif config.TORCH_AVAILABLE and "torch" in sys.modules and isinstance(obj, torch.Tensor):
-        return obj.detach().cpu().numpy().tolist(), True
+        if not only_1d_for_numpy or obj.ndim == 1:
+            return obj.detach().cpu().numpy(), True
+        else:
+            return [
+                _cast_to_python_objects(x, only_1d_for_numpy=only_1d_for_numpy)[0] for x in obj.detach().cpu().numpy()
+            ], True
     elif config.TF_AVAILABLE and "tensorflow" in sys.modules and isinstance(obj, tf.Tensor):
-        return obj.numpy().tolist(), True
+        if not only_1d_for_numpy or obj.ndim == 1:
+            return obj.numpy(), True
+        else:
+            return [_cast_to_python_objects(x, only_1d_for_numpy=only_1d_for_numpy)[0] for x in obj.numpy()], True
     elif config.JAX_AVAILABLE and "jax" in sys.modules and isinstance(obj, jnp.ndarray):
-        return obj.tolist(), True
+        if not only_1d_for_numpy or obj.ndim == 1:
+            return np.asarray(obj), True
+        else:
+            return [_cast_to_python_objects(x, only_1d_for_numpy=only_1d_for_numpy)[0] for x in np.asarray(obj)], True
     elif isinstance(obj, pd.Series):
         return obj.values.tolist(), True
     elif isinstance(obj, pd.DataFrame):
@@ -184,7 +203,7 @@ def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
         output = {}
         has_changed = False
         for k, v in obj.items():
-            casted_v, has_changed_v = _cast_to_python_objects(v)
+            casted_v, has_changed_v = _cast_to_python_objects(v, only_1d_for_numpy=only_1d_for_numpy)
             has_changed |= has_changed_v
             output[k] = casted_v
         return output if has_changed else obj, has_changed
@@ -193,9 +212,11 @@ def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
             for first_elmt in obj:
                 if first_elmt is not None:
                     break
-            casted_first_elmt, has_changed_first_elmt = _cast_to_python_objects(first_elmt)
+            casted_first_elmt, has_changed_first_elmt = _cast_to_python_objects(
+                first_elmt, only_1d_for_numpy=only_1d_for_numpy
+            )
             if has_changed_first_elmt:
-                return [_cast_to_python_objects(elmt)[0] for elmt in obj], True
+                return [_cast_to_python_objects(elmt, only_1d_for_numpy=only_1d_for_numpy)[0] for elmt in obj], True
             else:
                 if isinstance(obj, list):
                     return obj, False
@@ -207,7 +228,7 @@ def _cast_to_python_objects(obj: Any) -> Tuple[Any, bool]:
         return obj, False
 
 
-def cast_to_python_objects(obj: Any) -> Any:
+def cast_to_python_objects(obj: Any, only_1d_for_numpy=False) -> Any:
     """
     Cast numpy/pytorch/tensorflow/pandas objects to python lists.
     It works recursively.
@@ -222,7 +243,7 @@ def cast_to_python_objects(obj: Any) -> Any:
     Returns:
         casted_obj: the casted object
     """
-    return _cast_to_python_objects(obj)[0]
+    return _cast_to_python_objects(obj, only_1d_for_numpy=only_1d_for_numpy)[0]
 
 
 @dataclass
@@ -866,7 +887,7 @@ def encode_nested_example(schema, obj):
         }
     elif isinstance(schema, (list, tuple)):
         sub_schema = schema[0]
-        return [encode_nested_example(sub_schema, o) for o in obj]
+        return [encode_nested_example(sub_schema, o) for o in obj] if obj is not None else None
     elif isinstance(schema, Sequence):
         # We allow to reverse list of dict => dict of list for compatiblity with tfds
         if isinstance(schema.feature, dict):
@@ -885,7 +906,7 @@ def encode_nested_example(schema, obj):
         # schema.feature is not a dict
         if isinstance(obj, str):  # don't interpret a string as a list
             raise ValueError("Got a string but expected a list instead: '{}'".format(obj))
-        return [encode_nested_example(schema.feature, o) for o in obj]
+        return [encode_nested_example(schema.feature, o) for o in obj] if obj is not None else None
     # Object with special encoding:
     # ClassLabel will convert from string to int, TranslationVariableLanguages does some checks
     elif isinstance(schema, (ClassLabel, TranslationVariableLanguages, Value, _ArrayXD)):
@@ -948,6 +969,32 @@ def generate_from_arrow_type(pa_type: pa.DataType) -> FeatureType:
         return Value(dtype=_arrow_to_datasets_dtype(pa_type))
     else:
         raise ValueError(f"Cannot convert {pa_type} to a Feature type.")
+
+
+def numpy_to_pyarrow_listarray(arr: np.ndarray, type: pa.DataType = None) -> pa.ListArray:
+    """Build a PyArrow ListArray from a multidimensional NumPy array"""
+    arr = np.array(arr)
+    values = pa.array(arr.flatten(), type=type)
+    for i in range(arr.ndim - 1):
+        n_offsets = reduce(mul, arr.shape[: arr.ndim - i - 1], 1)
+        step_offsets = arr.shape[arr.ndim - i - 1]
+        offsets = pa.array(np.arange(n_offsets + 1) * step_offsets, type=pa.int32())
+        values = pa.ListArray.from_arrays(offsets, values)
+    return values
+
+
+def list_of_pa_arrays_to_pyarrow_listarray(l_arr: List[pa.Array]) -> pa.ListArray:
+    offsets = pa.array(np.cumsum([0] + [len(arr) for arr in l_arr]), type=pa.int32())
+    values = pa.concat_arrays(l_arr)
+    return pa.ListArray.from_arrays(offsets, values)
+
+
+def list_of_np_array_to_pyarrow_listarray(l_arr: List[np.ndarray], type: pa.DataType = None) -> pa.ListArray:
+    """Build a PyArrow ListArray from a possibly nested list of NumPy arrays"""
+    if len(l_arr) > 0:
+        return list_of_pa_arrays_to_pyarrow_listarray([numpy_to_pyarrow_listarray(arr, type=type) for arr in l_arr])
+    else:
+        return pa.array([], type=type)
 
 
 class Features(dict):

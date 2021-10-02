@@ -10,15 +10,27 @@ Simple check list for release from AllenNLP repo: https://github.com/allenai/all
 
 To create the package for pypi.
 
-1. Change the version in __init__.py, setup.py as well as docs/source/conf.py.
+0. Prerequisites:
+   - Dependencies:
+     - twine: "pip install twine"
+   - Create an account in (and join the 'datasets' project):
+     - PyPI: https://pypi.org/
+     - Test PyPI: https://test.pypi.org/
 
-2. Commit these changes with the message: "Release: VERSION"
+1. Change the version in:
+   - __init__.py
+   - setup.py
+   - docs/source/conf.py
 
-3. Add a tag in git to mark the release: "git tag VERSION -m'Adds tag VERSION for pypi' "
-   Push the tag to git: git push --tags origin master
+2. Commit these changes: "git commit -m 'Release: VERSION'"
+
+3. Add a tag in git to mark the release: "git tag VERSION -m 'Add tag VERSION for pypi'"
+   Push the tag to remote: git push --tags origin master
 
 4. Build both the sources and the wheel. Do not change anything in setup.py between
    creating the wheel and the source distribution (obviously).
+
+   First, delete any "build" directory that may exist from previous builds.
 
    For the wheel, run: "python setup.py bdist_wheel" in the top level directory.
    (this will build a wheel for the python version you use to build it).
@@ -28,12 +40,11 @@ To create the package for pypi.
 
 5. Check that everything looks correct by uploading the package to the pypi test server:
 
-   twine upload dist/* -r pypitest
-   (pypi suggest using twine as other methods upload files via plaintext.)
-   You may have to specify the repository url, use the following command then:
    twine upload dist/* -r pypitest --repository-url=https://test.pypi.org/legacy/
 
-   Check that you can install it in a virtualenv by running:
+   Check that you can install it in a virtualenv/notebook by running:
+   pip install huggingface_hub fsspec aiohttp
+   pip install -U tqdm
    pip install -i https://testpypi.python.org/pypi datasets
 
 6. Upload the final version to actual pypi:
@@ -41,10 +52,14 @@ To create the package for pypi.
 
 7. Fill release notes in the tag in github once everything is looking hunky-dory.
 
-8. Update the documentation commit in .circleci/deploy.sh for the accurate documentation to be displayed
-   Update the version mapping in docs/source/_static/js/custom.js with utils/release.py,
-   and set version to X.X.X+1.dev0 (e.g. 1.8.0 -> 1.8.1.dev0) in setup.py and __init__.py
+8. Update the documentation commit in .circleci/deploy.sh for the accurate documentation to be displayed.
+   Update the version mapping in docs/source/_static/js/custom.js with: "python utils/release.py --version VERSION"
+   Set version to X.X.X+1.dev0 (e.g. 1.8.0 -> 1.8.1.dev0) in:
+   - setup.py
+   - __init__.py
 
+9. Commit these changes: "git commit -m 'Release docs'"
+   Push the commit to remote: "git push origin master"
 """
 
 import datetime
@@ -72,7 +87,7 @@ REQUIRED_PKGS = [
     # for downloading datasets over HTTPS
     "requests>=2.19.0",
     # progress bars in download and scripts
-    "tqdm>=4.27",
+    "tqdm>=4.62.1",
     # dataclasses for Python versions that don't have it
     "dataclasses;python_version<'3.7'",
     # for fast hashing
@@ -83,9 +98,11 @@ REQUIRED_PKGS = [
     "importlib_metadata;python_version<'3.8'",
     # to save datasets locally or on any filesystem
     # minimum 2021.05.0 to have the AbstractArchiveFileSystem
-    "fsspec>=2021.05.0",
+    "fsspec[http]>=2021.05.0",
+    # for data streaming via http
+    "aiohttp",
     # To get datasets from the Datasets Hub on huggingface.co
-    "huggingface_hub<0.1.0",
+    "huggingface_hub>=0.0.14,<0.1.0",
     # Utilities from PyPA to e.g., compare versions
     "packaging",
 ]
@@ -103,17 +120,16 @@ TESTS_REQUIRE = [
     "pytest",
     "pytest-xdist",
     # optional dependencies
-    "aiohttp",
     "apache-beam>=2.26.0",
     "elasticsearch",
-    "aiobotocore==1.2.2",
-    "boto3==1.16.43",
-    "botocore==1.19.52",
+    "aiobotocore",
+    "boto3",
+    "botocore",
     "faiss-cpu",
     "fsspec[s3]",
     "moto[s3,server]==2.0.4",
     "rarfile>=4.0",
-    "s3fs",
+    "s3fs==2021.08.1",
     "tensorflow>=2.3",
     "torch",
     "transformers",
@@ -174,11 +190,11 @@ EXTRAS_REQUIRE = {
     "torch": ["torch"],
     "s3": [
         "fsspec",
-        "boto3==1.16.43",
-        "botocore==1.19.52",
+        "boto3",
+        "botocore",
         "s3fs",
     ],
-    "streaming": ["aiohttp"],
+    "streaming": [],  # for backward compatibility
     "dev": TESTS_REQUIRE + QUALITY_REQUIRE,
     "tests": TESTS_REQUIRE,
     "quality": QUALITY_REQUIRE,
@@ -191,16 +207,20 @@ EXTRAS_REQUIRE = {
         "sphinx-rtd-theme==0.4.3",
         "sphinxext-opengraph==0.4.1",
         "sphinx-copybutton",
-        "fsspec",
+        "fsspec<2021.9.0",
         "s3fs",
+        "sphinx-panels",
+        "sphinx-inline-tabs",
+        "myst-parser",
     ],
 }
 
 setup(
     name="datasets",
-    version="1.9.1.dev0",  # expected format is one of x.y.z.dev0, or x.y.z.rc1 or x.y.z (no to dashes, yes to dots)
+    version="1.12.2.dev0",  # expected format is one of x.y.z.dev0, or x.y.z.rc1 or x.y.z (no to dashes, yes to dots)
     description=DOCLINES[0],
     long_description="\n".join(DOCLINES[2:]),
+    long_description_content_type='text/markdown',
     author="HuggingFace Inc.",
     author_email="thomas@huggingface.co",
     url="https://github.com/huggingface/datasets",
