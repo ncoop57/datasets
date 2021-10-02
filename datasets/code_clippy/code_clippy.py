@@ -19,6 +19,7 @@ More to add here.
 
 import os
 import io
+import json
 from typing import List
 import jsonlines
 import zstandard as zstd
@@ -51,9 +52,10 @@ _LICENSE = ""
 # TODO: Add link to the official dataset URLs here (once we have those)
 # The HuggingFace dataset library don't host the datasets but only point to the original files
 # This can be an arbitrary nested dict/list of URLs (see below in `_split_generators` method)
-_URLs = {
-    "https://huggingface.co/great-new-dataset-first_domain.zip",
-}
+_URLs = json.load(open("./code_clippy_urls.json"))
+
+# datasets = ["code_clippy_dedup_data", "code_clippy_dup_data"]
+# splits = ["train", "validation", "test"]
 
 class CodeClippy(datasets.GeneratorBasedBuilder):
     """CodeClippy dataset - opensource code from Github. Scrapped July 7 2021."""
@@ -71,12 +73,12 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
     # You will be able to load one or the other configurations in the following list with
     # data = datasets.load_dataset('my_dataset', 'first_domain')
     # data = datasets.load_dataset('my_dataset', 'second_domain')
-    # BUILDER_CONFIGS = [
-    #     datasets.BuilderConfig(name="first_domain", version=VERSION, description="This part of my dataset covers a first domain"),
-    #     datasets.BuilderConfig(name="second_domain", version=VERSION, description="This part of my dataset covers a second domain"),
-    # ]
+    BUILDER_CONFIGS = [
+        datasets.BuilderConfig(name="code_clippy_dedup_data", version=VERSION, description="This part of my dataset covers a first domain"),
+        datasets.BuilderConfig(name="code_clippy_dup_data", version=VERSION, description="This part of my dataset covers a second domain"),
+    ]
 
-    # DEFAULT_CONFIG_NAME = "first_domain"
+    DEFAULT_CONFIG_NAME = "code_clippy_dedup_data"
 
     def _info(self):
         features = datasets.Features(
@@ -89,7 +91,7 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                     "file_name": datasets.Value("string"),
                     "mime_type": datasets.Value("string")
                 }
-                )
+            )
         return datasets.DatasetInfo(
             description=_DESCRIPTION,
             features=features,
@@ -104,20 +106,19 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
         # By default the archives will be extracted and a path to a cached folder where they are extracted is returned instead of the archive
         
         #TODO(high priority): changes this to load from the-eye
-        # data_dir = dl_manager.download_and_extract(_URLs)
-        data_dir = self.config.data_dir
+        downloaded_files = dl_manager.download(_URLs[self.config.name])
         return [
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
-                gen_kwargs={"filepaths": sorted([str(fp) for fp in Path(f"{data_dir}/train").glob("*.jsonl.zst")])}
+                gen_kwargs={"filepaths": downloaded_files["train"]}
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.TEST,
-                gen_kwargs={"filepaths": sorted([str(fp) for fp in Path(f"{data_dir}/test").glob("*.jsonl.zst")])}
+                gen_kwargs={"filepaths": downloaded_files["test"]}
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
-                gen_kwargs={"filepaths": sorted([str(fp) for fp in Path(f"{data_dir}/validation").glob("*.jsonl.zst")])}
+                gen_kwargs={"filepaths": downloaded_files["validation"]}
             ),
         ]
 
